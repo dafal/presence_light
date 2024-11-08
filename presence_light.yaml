@@ -119,7 +119,7 @@ action:
 
       - default:
           - alias: "Wait the number of seconds that has been set for regular pass"
-            delay: !input.no_motion_wait
+            delay: "{{ !input.no_motion_wait | int }}"
           - alias: "Turn off the light after regular pass"
             service: light.turn_off
             target: !input light_target
