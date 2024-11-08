@@ -1,6 +1,6 @@
 blueprint:
-  name: Presence-activated Light
-  description: Turn on a light when presence is detected.
+  name: Presence-activated Light with Quick Pass Mode
+  description: Turn on a light when presence is detected, and turn it off immediately for quick passages.
   domain: automation
   source_url: https://github.com/antoniopacheco/presence_light/presence_light.yaml
   input:
@@ -64,6 +64,15 @@ blueprint:
         number:
           min: 0
           max: 255
+    quick_pass_time:
+      name: Quick Pass Time
+      description: Maximum time in seconds to consider a quick pass
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 30
+          unit_of_measurement: seconds
 
 # If presence is detected within the delay,
 # we restart the script.
@@ -94,10 +103,25 @@ action:
       entity_id: !input presence_entity
       from: "on"
       to: "off"
-  - alias: "Wait the number of seconds that has been set"
-    delay: !input no_motion_wait
-  - alias: "Turn off the light"
-    service: light.turn_off
-    target: !input light_target
-    data:
-      transition: !input off_transition
+
+  - alias: "Check if presence duration is less than quick pass time"
+    choose:
+      - conditions:
+          - condition: template
+            value_template: >
+              {{ (as_timestamp(now()) - as_timestamp(states[!input.presence_entity].last_changed)) < !input.quick_pass_time }}
+        sequence:
+          - alias: "Turn off the light immediately after quick pass"
+            service: light.turn_off
+            target: !input light_target
+            data:
+              transition: !input off_transition
+
+      - default:
+          - alias: "Wait the number of seconds that has been set for regular pass"
+            delay: !input.no_motion_wait
+          - alias: "Turn off the light after regular pass"
+            service: light.turn_off
+            target: !input light_target
+            data:
+              transition: !input off_transition
