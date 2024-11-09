@@ -109,7 +109,7 @@ action:
       - conditions:
           - condition: template
             value_template: >
-              {{ (as_timestamp(now()) - as_timestamp(states[!input.presence_entity].last_changed)) < !input.quick_pass_time }}
+              {{ (as_timestamp(now()) - as_timestamp(state_attr(presence_entity, 'last_changed'))) < quick_pass_time }}
         sequence:
           - alias: "Turn off the light immediately after quick pass"
             service: light.turn_off
@@ -119,7 +119,7 @@ action:
 
       - default:
           - alias: "Wait the number of seconds that has been set for regular pass"
-            delay: "{{ !input.no_motion_wait | int }}"
+            delay: "{{ no_motion_wait }}"
           - alias: "Turn off the light after regular pass"
             service: light.turn_off
             target: !input light_target
