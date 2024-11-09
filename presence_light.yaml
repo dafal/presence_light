@@ -109,7 +109,9 @@ action:
       - conditions:
           - condition: template
             value_template: >
-              {{ (as_timestamp(now()) - as_timestamp(states[!input.presence_entity].last_changed)) < !input.quick_pass_time }}
+              {% set quick_pass_time = states('input_number.quick_pass_time') | int %}
+              {% set presence_entity = states['' + !input.presence_entity + ''].last_changed %}
+              {{ (as_timestamp(now()) - as_timestamp(presence_entity)) < quick_pass_time }}
         sequence:
           - alias: "Turn off the light immediately after quick pass"
             service: light.turn_off
