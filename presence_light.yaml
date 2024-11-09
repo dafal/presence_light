@@ -1,26 +1,27 @@
 blueprint:
   name: Presence-activated Light with Quick Pass Mode
   description: >
-    Turn on a light when presence is detected, and turn it off immediately for quick passages.
+    Allume une lumière lorsqu'une présence est détectée, et l'éteint immédiatement après pour les passages rapides.
   domain: automation
+  source_url: https://github.com/antoniopacheco/presence_light/presence_light.yaml
   input:
     presence_entity:
-      name: Presence Sensor
-      description: Presence sensor device
+      name: Capteur de Présence
+      description: Appareil capteur de présence
       selector:
         entity:
           domain: binary_sensor
           device_class: occupancy
     light_target:
-      name: Light
-      description: Light device
+      name: Lumière
+      description: Appareil lumière
       selector:
         target:
           entity:
             domain: light
     bright_percentage:
-      name: Bright Percentage
-      description: Brightness level that the light will turn to when turned on
+      name: Pourcentage de Luminosité
+      description: Niveau de luminosité que la lumière atteindra lorsqu'elle sera allumée
       default: 100
       selector:
         number:
@@ -28,8 +29,8 @@ blueprint:
           max: 100
           unit_of_measurement: '%'
     no_motion_wait:
-      name: Wait time
-      description: Time to leave the light on after last motion is detected.
+      name: Temps d'attente
+      description: Temps en secondes pour laisser la lumière allumée après la dernière détection de mouvement
       default: 0
       selector:
         number:
@@ -37,8 +38,8 @@ blueprint:
           max: 3600
           unit_of_measurement: seconds
     off_transition:
-      name: Transition time
-      description: Time in seconds for the light to turn off
+      name: Temps de Transition
+      description: Temps en secondes pour l'extinction progressive de la lumière
       default: 0
       selector:
         number:
@@ -46,24 +47,24 @@ blueprint:
           max: 60
           unit_of_measurement: seconds
     light_sensor:
-      name: Light Sensor
-      description: Light sensor to read from
+      name: Capteur de Lumière
+      description: Capteur de lumière pour mesurer la luminosité ambiante
       default: ''
       selector:
         entity:
           domain: sensor
           device_class: illuminance
     light_threshold:
-      name: Light Threshold
-      description: Light sensor's lower threshold
+      name: Seuil de Lumière
+      description: Seuil inférieur du capteur de lumière
       default: 200
       selector:
         number:
           min: 0
           max: 100000
     quick_pass_time:
-      name: Quick Pass Time
-      description: Maximum time in seconds to consider a quick pass
+      name: Temps de Passage Rapide
+      description: Temps maximum en secondes pour considérer un passage comme rapide
       default: 10
       selector:
         number:
@@ -71,17 +72,9 @@ blueprint:
           max: 30
           unit_of_measurement: seconds
 
-mode: restart
-max_exceeded: silent
-
-variables:
-  presence_entity: !input presence_entity
-  light_sensor: !input light_sensor
-  light_threshold: !input light_threshold | float(0)
-  quick_pass_time: !input quick_pass_time | float(0)
-  no_motion_wait: !input no_motion_wait | int(0)
-  off_transition: !input off_transition
-  bright_percentage: !input bright_percentage
+# Changement du mode pour gérer correctement le passage rapide
+mode: queued
+max: 10
 
 trigger:
   - platform: state
@@ -89,47 +82,62 @@ trigger:
     from: 'off'
     to: 'on'
 
+variables:
+  presence_entity: !input presence_entity
+  light_sensor: !input light_sensor
+  light_threshold: !input light_threshold
+  quick_pass_time: !input quick_pass_time
+  no_motion_wait: !input no_motion_wait
+  off_transition: !input off_transition
+  bright_percentage: !input bright_percentage
+
 condition:
   - condition: template
     value_template: >
       {% if light_sensor != '' %}
-        {{ states(light_sensor) | float(0) < light_threshold }}
+        {{ states(light_sensor) | float(0) < light_threshold | float(0) }}
       {% else %}
         true
       {% endif %}
 
 action:
-  - alias: "Set presence start time"
+  - alias: "Enregistrer l'heure de début de présence"
     variables:
       presence_start_time: "{{ now() }}"
-  - alias: "Turn on the light"
+
+  - alias: "Allumer la lumière"
     service: light.turn_on
     target: !input light_target
     data:
       brightness_pct: "{{ bright_percentage }}"
-  - alias: "Wait until there is no motion from device"
+
+  - alias: "Attendre jusqu'à ce qu'il n'y ait plus de mouvement"
     wait_for_trigger:
       - platform: state
         entity_id: !input presence_entity
         from: 'on'
         to: 'off'
-  - alias: "Check if presence duration is less than quick pass time"
+
+  - alias: "Calculer la durée de présence"
+    variables:
+      presence_duration: "{{ (as_timestamp(now()) - as_timestamp(presence_start_time)) | float(0) }}"
+
+  - alias: "Décider d'appliquer le mode passage rapide"
     choose:
       - conditions:
           - condition: template
-            value_template: >
-              {{ (as_timestamp(now()) - as_timestamp(presence_start_time)) < quick_pass_time }}
+            value_template: "{{ presence_duration < quick_pass_time }}"
         sequence:
-          - alias: "Turn off the light immediately after quick pass"
+          - alias: "Éteindre la lumière immédiatement après un passage rapide"
             service: light.turn_off
             target: !input light_target
             data:
               transition: "{{ off_transition }}"
     default:
-      - alias: "Wait the number of seconds set for regular pass"
+      - alias: "Attendre le temps défini après la détection de mouvement"
         delay:
-          seconds: "{{ no_motion_wait }}"
-      - alias: "Turn off the light after regular pass"
+          seconds: "{{ no_motion_wait | int(0) }}"
+      - alias: "Éteindre la lumière après un passage normal"
         service: light.turn_off
         target: !input light_target
         data:
