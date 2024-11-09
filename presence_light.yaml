@@ -1,26 +1,27 @@
 blueprint:
   name: Presence-activated Light with Quick Pass Mode
   description: >
-    Allume une lumière lorsqu'une présence est détectée, et l'éteint immédiatement après pour les passages rapides, sauf si la lumière était déjà allumée.
+    Allume une lumière lorsqu'une présence est détectée. Si la présence dure moins de X secondes (passage rapide), la lumière s'éteint immédiatement après la fin de la présence, sauf si la lumière était déjà allumée au moment du déclenchement.
+
   domain: automation
   input:
     presence_entity:
       name: Capteur de Présence
-      description: Appareil capteur de présence
+      description: Capteur de présence
       selector:
         entity:
           domain: binary_sensor
           device_class: occupancy
     light_target:
       name: Lumière
-      description: Appareil lumière
+      description: Appareil lumière à contrôler
       selector:
         target:
           entity:
             domain: light
     bright_percentage:
       name: Pourcentage de Luminosité
-      description: Niveau de luminosité que la lumière atteindra lorsqu'elle sera allumée
+      description: Niveau de luminosité de la lumière lorsqu'elle s'allume
       default: 100
       selector:
         number:
@@ -29,7 +30,7 @@ blueprint:
           unit_of_measurement: '%'
     no_motion_wait:
       name: Temps d'attente
-      description: Temps en secondes pour laisser la lumière allumée après la dernière détection de mouvement
+      description: Temps en secondes avant d'éteindre la lumière après la dernière détection de présence
       default: 0
       selector:
         number:
@@ -47,7 +48,7 @@ blueprint:
           unit_of_measurement: seconds
     light_sensor:
       name: Capteur de Lumière
-      description: Capteur de lumière pour mesurer la luminosité ambiante
+      description: Capteur de luminosité ambiante
       default: ''
       selector:
         entity:
@@ -55,7 +56,7 @@ blueprint:
           device_class: illuminance
     light_threshold:
       name: Seuil de Lumière
-      description: Seuil inférieur du capteur de lumière
+      description: Seuil inférieur de luminosité pour allumer la lumière
       default: 200
       selector:
         number:
@@ -63,27 +64,16 @@ blueprint:
           max: 100000
     quick_pass_time:
       name: Temps de Passage Rapide
-      description: Temps maximum en secondes pour considérer un passage comme rapide
+      description: Durée maximale en secondes pour considérer un passage comme rapide
       default: 10
       selector:
         number:
           min: 1
-          max: 30
+          max: 60
           unit_of_measurement: seconds
 
 mode: restart
 max_exceeded: silent
-
-variables:
-  presence_entity: !input presence_entity
-  light_sensor: !input light_sensor
-  light_threshold: !input light_threshold | float(0)
-  quick_pass_time: !input quick_pass_time | float(0)
-  no_motion_wait: !input no_motion_wait | int(0)
-  off_transition: !input off_transition
-  bright_percentage: !input bright_percentage
-  light_was_on: "{{ is_state_attr(light_entity_id, 'state', 'on') }}"
-  light_entity_id: "{{ expand(!input light_target) | map(attribute='entity_id') | list | first }}"
 
 trigger:
   - platform: state
@@ -94,29 +84,29 @@ trigger:
 condition:
   - condition: template
     value_template: >
-      {% if light_sensor != '' %}
-        {{ states(light_sensor) | float(0) < light_threshold }}
+      {% if !input light_sensor != '' %}
+        {{ states(!input light_sensor) | float(0) < !input light_threshold | float }}
       {% else %}
         true
       {% endif %}
 
 action:
+  - alias: "Vérifier si la lumière est déjà allumée"
+    variables:
+      light_entity_id: "{{ expand(!input light_target) | map(attribute='entity_id') | list | first }}"
+      light_was_on: "{{ is_state(light_entity_id, 'on') }}"
+
+  - alias: "Allumer la lumière"
+    service: light.turn_on
+    target: !input light_target
+    data:
+      brightness_pct: !input bright_percentage
+
   - alias: "Enregistrer l'heure de début de présence"
     variables:
       presence_start_time: "{{ now() }}"
 
-  - alias: "Allumer la lumière si elle n'est pas déjà allumée"
-    condition:
-      - condition: state
-        entity_id: "{{ light_entity_id }}"
-        state: 'off'
-    then:
-      - service: light.turn_on
-        target: !input light_target
-        data:
-          brightness_pct: "{{ bright_percentage }}"
-
-  - alias: "Attendre jusqu'à ce qu'il n'y ait plus de mouvement"
+  - alias: "Attendre la fin de la présence"
     wait_for_trigger:
       - platform: state
         entity_id: !input presence_entity
@@ -125,41 +115,26 @@ action:
 
   - alias: "Calculer la durée de présence"
     variables:
-      presence_duration: "{{ (as_timestamp(now()) - as_timestamp(presence_start_time)) | float(0) }}"
+      presence_duration: "{{ (as_timestamp(now()) - as_timestamp(presence_start_time)) }}"
 
   - alias: "Décider d'appliquer le mode passage rapide"
     choose:
       - conditions:
           - condition: template
             value_template: >
-              {{ presence_duration < quick_pass_time and not light_was_on }}
+              {{ presence_duration < !input quick_pass_time and not (light_was_on | bool) }}
         sequence:
           - alias: "Éteindre la lumière après un passage rapide"
             service: light.turn_off
             target: !input light_target
             data:
-              transition: "{{ off_transition }}"
-    default:
-      - alias: "Attendre le temps défini ou jusqu'à ce que la présence soit détectée à nouveau"
-        wait_for_trigger:
-          - platform: state
-            entity_id: !input presence_entity
-            to: 'on'
-        timeout: "{{ no_motion_wait }}"
-        continue_on_timeout: true
-
-      - alias: "Vérifier si la présence est détectée à nouveau"
-        choose:
-          - conditions:
-              - condition: state
-                entity_id: !input presence_entity
-                state: 'on'
-            sequence:
-              - alias: "La présence est détectée à nouveau, ne pas éteindre la lumière"
-                # Ne rien faire, l'automatisation redémarrera grâce à 'mode: restart'
-        default:
-          - alias: "Éteindre la lumière après le délai sans mouvement"
-            service: light.turn_off
-            target: !input light_target
-            data:
-              transition: "{{ off_transition }}"
+              transition: !input off_transition
+      default:
+        - alias: "Attendre le délai avant extinction"
+          delay:
+            seconds: !input no_motion_wait
+        - alias: "Éteindre la lumière"
+          service: light.turn_off
+          target: !input light_target
+          data:
+            transition: !input off_transition
