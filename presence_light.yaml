@@ -1,6 +1,7 @@
 blueprint:
   name: Presence-activated Light with Quick Pass Mode
-  description: Turn on a light when presence is detected, and turn it off immediately for quick passages.
+  description: >
+    Turn on a light when presence is detected, and turn it off immediately for quick passages.
   domain: automation
   input:
     presence_entity:
@@ -19,13 +20,13 @@ blueprint:
             domain: light
     bright_percentage:
       name: Bright Percentage
-      description: Brightness level that the light will turn into once is turned on
+      description: Brightness level that the light will turn to when turned on
       default: 100
       selector:
         number:
           min: 0
           max: 100
-          unit_of_measurement: percentage
+          unit_of_measurement: '%'
     no_motion_wait:
       name: Wait time
       description: Time to leave the light on after last motion is detected.
@@ -37,7 +38,7 @@ blueprint:
           unit_of_measurement: seconds
     off_transition:
       name: Transition time
-      description: Time in seconds of transition turning off
+      description: Time in seconds for the light to turn off
       default: 0
       selector:
         number:
@@ -45,24 +46,21 @@ blueprint:
           max: 60
           unit_of_measurement: seconds
     light_sensor:
-      name: Light sensor
+      name: Light Sensor
       description: Light sensor to read from
-      default: []
+      default: ''
       selector:
         entity:
-          domain:
-            - sensor
-          device_class:
-            - illuminance
-          multiple: false
+          domain: sensor
+          device_class: illuminance
     light_threshold:
-      name: Light threshold
+      name: Light Threshold
       description: Light sensor's lower threshold
       default: 200
       selector:
         number:
           min: 0
-          max: 255
+          max: 100000
     quick_pass_time:
       name: Quick Pass Time
       description: Maximum time in seconds to consider a quick pass
@@ -76,54 +74,63 @@ blueprint:
 mode: restart
 max_exceeded: silent
 
+variables:
+  presence_entity: !input presence_entity
+  light_sensor: !input light_sensor
+  light_threshold: !input light_threshold | float(0)
+  quick_pass_time: !input quick_pass_time | float(0)
+  no_motion_wait: !input no_motion_wait | int(0)
+  off_transition: !input off_transition
+  bright_percentage: !input bright_percentage
+
 trigger:
-  platform: state
-  entity_id: !input presence_entity
-  from: "off"
-  to: "on"
+  - platform: state
+    entity_id: !input presence_entity
+    from: 'off'
+    to: 'on'
 
 condition:
   - condition: template
     value_template: >
-      {% if input.light_sensor != [] %}
-        {{ states(input.light_sensor) | float < input.light_threshold | float }}
+      {% if light_sensor != '' %}
+        {{ states(light_sensor) | float(0) < light_threshold }}
       {% else %}
         true
       {% endif %}
 
 action:
+  - alias: "Set presence start time"
+    variables:
+      presence_start_time: "{{ now() }}"
   - alias: "Turn on the light"
     service: light.turn_on
     target: !input light_target
     data:
-      brightness_pct: !input bright_percentage
-
+      brightness_pct: "{{ bright_percentage }}"
   - alias: "Wait until there is no motion from device"
     wait_for_trigger:
       - platform: state
         entity_id: !input presence_entity
-        from: "on"
-        to: "off"
-
+        from: 'on'
+        to: 'off'
   - alias: "Check if presence duration is less than quick pass time"
     choose:
       - conditions:
           - condition: template
             value_template: >
-              {{ (as_timestamp(now()) - as_timestamp(states[input.presence_entity].last_changed)) < (input.quick_pass_time | float) }}
+              {{ (as_timestamp(now()) - as_timestamp(presence_start_time)) < quick_pass_time }}
         sequence:
           - alias: "Turn off the light immediately after quick pass"
             service: light.turn_off
             target: !input light_target
             data:
-              transition: !input off_transition
-
+              transition: "{{ off_transition }}"
     default:
-      - alias: "Wait the number of seconds that has been set for regular pass"
+      - alias: "Wait the number of seconds set for regular pass"
         delay:
-          seconds: "{{ input.no_motion_wait | int }}"
+          seconds: "{{ no_motion_wait }}"
       - alias: "Turn off the light after regular pass"
         service: light.turn_off
         target: !input light_target
         data:
-          transition: !input off_transition
+          transition: "{{ off_transition }}"
