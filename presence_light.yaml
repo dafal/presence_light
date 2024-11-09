@@ -90,6 +90,10 @@ condition:
     entity_id: !input light_sensor
     below: !input light_threshold
 
+variables:
+  quick_pass_time: !input quick_pass_time
+  presence_entity: !input presence_entity
+
 action:
   - alias: "Turn on the light"
     service: light.turn_on
@@ -109,9 +113,7 @@ action:
       - conditions:
           - condition: template
             value_template: >
-              {% set quick_pass_time = states('input_number.quick_pass_time') | int %}
-              {% set presence_entity = states['' + !input.presence_entity + ''].last_changed %}
-              {{ (as_timestamp(now()) - as_timestamp(presence_entity)) < quick_pass_time }}
+              {{ (as_timestamp(now()) - as_timestamp(states[presence_entity].last_changed)) < quick_pass_time }}
         sequence:
           - alias: "Turn off the light immediately after quick pass"
             service: light.turn_off
@@ -121,7 +123,7 @@ action:
 
     default:
       - alias: "Wait the number of seconds that has been set for regular pass"
-        delay: "{{ !input.no_motion_wait }}"
+        delay: "{{ no_motion_wait }}"
       - alias: "Turn off the light after regular pass"
         service: light.turn_off
         target: !input light_target
